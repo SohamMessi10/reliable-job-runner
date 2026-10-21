@@ -120,6 +120,45 @@ is an error rather than a silent return of the old job, because that almost alwa
 bug. Payloads are stored as JSON with sorted keys, so `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}`
 count as the same request.
 
+## The worker loop
+
+Each turn of `Worker.run()`:
+
+1. Return every job whose lease has expired to the queue (or fail it if no attempts are left).
+2. Claim the oldest runnable job of a kind this worker has a handler for.
+3. Run the handler: `handler(payload, ctx) -> result`.
+4. Record the outcome: success with its result, a retry after backoff, or a final failure.
+5. If nothing was runnable, sleep for the poll interval.
+
+Handlers decide what a failure means by what they raise:
+
+| Raised | Meaning | What happens |
+|---|---|---|
+| `Retryable` | Temporary (timeout, rate limit) | Retried after backoff, up to `max_attempts` |
+| `Permanent` | Can never succeed (bad input, missing file) | Failed now, with the message |
+| anything else | Unexpected | Retried (many unexpected errors are transient), but bounded, so a bug stops after `max_attempts` with `ErrorType: message` recorded |
+
+A handler that runs long calls `ctx.heartbeat()` to extend its lease. If a handler finishes
+**after** its lease expired, its result is discarded: another worker may already be running the
+job again, so recording the late result could overwrite a newer attempt. The job runs again. That
+is the at-least-once case, and a test shows the handler really running twice.
+
+`KeyboardInterrupt` and `SystemExit` are not caught. If the process is killed mid-job, the job
+stays `running`, nobody records anything, and lease expiry later returns it to the queue. A
+recovered job waits out its backoff counted from the moment of recovery.
+
+`stop()` lets the current job finish, then ends the loop, so stopping a worker doesn't abandon
+work halfway. The clock and the sleep function are injected, so tests simulate minutes of
+retries and lease expiries instantly.
+
+### Demo job: `summarize_csv`
+
+Reads a CSV and writes a JSON summary (row count, columns, and exact min/max/sum of numeric
+columns, computed with `Decimal`). It is idempotent: the output is deterministic and written
+with an atomic rename, so running it twice produces an identical file. Bad input (missing file,
+not UTF-8, malformed CSV, missing output folder, output path equal to the input) is
+`Permanent`, so it isn't retried pointlessly.
+
 ## Invariants (what the tests must prove)
 
 - A job only moves along the arrows in the lifecycle above; anything else is rejected.

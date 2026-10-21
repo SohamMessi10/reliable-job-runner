@@ -37,6 +37,24 @@
   race fails with "database is locked") and an early JSON check that the transaction already
   covered (removed).
 
+### Milestone 3: The worker loop
+- `Worker(store, handlers, ...)`: `run_once()` recovers expired leases, claims a job of a known
+  kind, runs its handler, and records success, retry, or failure; `run()` loops with a poll
+  sleep and stops cleanly via `stop()` after the current job.
+- `Retryable` / `Permanent` exceptions; unexpected errors are retried but bounded.
+  `ctx.heartbeat()` extends the lease. A result that arrives after the lease was lost is
+  discarded (`lease_lost`). A killed process leaves the job running until its lease expires.
+- Demo handler `summarize_csv`: exact Decimal statistics, atomic output, idempotent, bad input
+  is permanent.
+- Tests use a fake clock and sleep: retries after backoff, attempts running out, the handler
+  really running twice after a lost lease, heartbeats keeping a long job alive, recovery after a
+  crash, graceful stop.
+- Mutation testing: 15 deliberate bugs caught. Two of them (busy loop when idle, stop ignored)
+  made tests hang rather than fail, so loop tests now count turns and fail fast. A thread-based
+  timeout was tried first and broke, because SQLite connections can't cross threads. Two tests
+  first assumed backoff after recovery started at lease expiry; it starts at recovery, and the
+  tests now say so.
+
 ## Commands verified
 
 | Where | Python | Command | Result |
@@ -44,10 +62,12 @@
 | Claude's Linux workspace | 3.11, 3.13, 3.14 | `python -m pytest`, dev and ci profiles | 39 passed (milestone 1) |
 | GitHub Actions | 3.11–3.14, macOS 3.13 | `tests` workflow on `8a79625` | was still running when checked |
 | Claude's Linux workspace | 3.11, 3.13, 3.14 | `python -m pytest`, dev and ci profiles | 77 passed (milestone 2) |
+| Claude's Linux workspace | 3.11, 3.13, 3.14 | `python -m pytest`, dev and ci profiles | 103 passed (milestone 3) |
 
 ## Next
 
-- Milestone 3: the worker loop: run handlers, record results, retry with backoff, recover expired leases.
+- Milestone 4: HTTP API for submitting jobs and checking status, plus `jobrunner` commands to
+  start a worker and the API.
 
 ## Concepts to review
 - At-least-once vs exactly-once delivery, and why idempotency matters.
@@ -59,3 +79,6 @@
 - Optimistic checks (`WHERE ... AND state = ?`) as a backstop.
 - Idempotency keys, and why reusing one for a different request is an error.
 - Testing concurrency honestly: making sure the race actually happens.
+- Retryable vs permanent failures, and why unexpected errors are retried but bounded.
+- Heartbeats; why a late result must be discarded.
+- Graceful shutdown; dependency injection of clock and sleep.

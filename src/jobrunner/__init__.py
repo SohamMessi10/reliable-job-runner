@@ -14,8 +14,14 @@ from jobrunner.jobs import (
     submit,
 )
 from jobrunner.store import SCHEMA_VERSION, IdempotencyConflict, JobNotFound, JobStore, StoreError
+from jobrunner.worker import JobContext, Outcome, Permanent, Retryable, Worker
 
 __all__ = [
+    "JobContext",
+    "Outcome",
+    "Permanent",
+    "Retryable",
+    "Worker",
     "SCHEMA_VERSION",
     "IdempotencyConflict",
     "JobNotFound",
