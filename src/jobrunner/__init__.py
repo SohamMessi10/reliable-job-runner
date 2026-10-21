@@ -13,8 +13,14 @@ from jobrunner.jobs import (
     fail,
     submit,
 )
+from jobrunner.store import SCHEMA_VERSION, IdempotencyConflict, JobNotFound, JobStore, StoreError
 
 __all__ = [
+    "SCHEMA_VERSION",
+    "IdempotencyConflict",
+    "JobNotFound",
+    "JobStore",
+    "StoreError",
     "Job",
     "RetryPolicy",
     "State",

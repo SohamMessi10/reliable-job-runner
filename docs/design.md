@@ -91,6 +91,35 @@ Times are integers in milliseconds, and the current time is always passed in, ne
 the logic. Tests can therefore jump a lease past its expiry instantly instead of sleeping, and
 every transition is deterministic.
 
+## Storage
+
+Jobs live in one SQLite table, `jobs`, in WAL mode so status reads can continue while a worker
+writes. Each lifecycle step loads the job, applies the pure function from `jobs.py`, and writes
+the result back, all inside one `BEGIN IMMEDIATE` transaction:
+
+- **IMMEDIATE takes the write lock before reading.** Two workers can't both read "job 7 is
+  queued" and both claim it: the second waits for the lock, then sees job 7 already running.
+  Writers wait up to 5 seconds for the lock instead of failing at once.
+- **Every UPDATE repeats what it read** (`WHERE job_id = ? AND state = ? AND attempts = ?`) and
+  requires exactly one changed row. That's a backstop: if anything ever bypassed the lock, the
+  write fails loudly instead of overwriting another worker's attempt.
+- **The schema enforces the invariants** with CHECK constraints (only running jobs hold a lease,
+  a queued job has an attempt left, a failed job has an error, payloads and results are valid
+  JSON), so even a row written by another tool can't describe an impossible job.
+- **Partial indexes** cover only queued jobs (for finding the next runnable one) and only
+  running jobs (for finding expired leases), so those queries stay fast as finished jobs pile up.
+
+The oldest runnable job is claimed first (`ORDER BY run_after, job_id`).
+
+### Idempotent submission
+
+`idempotency_key` is a UNIQUE column. Submitting with a key that exists returns the existing job
+(in whatever state it's now in) instead of creating a second one, so a client can safely retry a
+submission whose response it never received. Reusing a key for a **different** kind or payload
+is an error rather than a silent return of the old job, because that almost always means a client
+bug. Payloads are stored as JSON with sorted keys, so `{"a": 1, "b": 2}` and `{"b": 2, "a": 1}`
+count as the same request.
+
 ## Invariants (what the tests must prove)
 
 - A job only moves along the arrows in the lifecycle above; anything else is rejected.
@@ -103,6 +132,7 @@ every transition is deterministic.
 - A request with a stale fencing token never changes a job.
 - A `succeeded` job has a result; a `failed` job has an error.
 - Backoff delays are always between 0 and the cap.
+- When workers in separate processes race for the same jobs, each job is claimed exactly once.
 
 ## Milestones
 

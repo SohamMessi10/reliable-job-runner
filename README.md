@@ -5,7 +5,7 @@
 A background job queue that retries temporary failures, gives up on permanent ones, recovers
 jobs from crashed workers, and never lets a stale worker overwrite a newer attempt.
 
-> **Status:** in development. The job state machine is done. See
+> **Status:** in development. The job state machine and SQLite storage with safe claiming are done. See
 > [`docs/design.md`](docs/design.md) for the plan and [`PROGRESS.md`](PROGRESS.md) for status.
 
 ## Setup
